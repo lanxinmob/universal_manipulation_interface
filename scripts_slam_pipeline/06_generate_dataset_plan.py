@@ -88,7 +88,7 @@ def get_x_projection(tx_tag_this, tx_tag_other):
 @click.option('-o', '--output', default=None)
 @click.option('-to', '--tcp_offset', type=float, default=0.205, help="Distance from gripper tip to mounting screw")
 @click.option('-ts', '--tx_slam_tag', default=None, help="tx_slam_tag.json")
-@click.option('-nz', '--nominal_z', type=float, default=0.072, help="nominal Z value for gripper finger tag")
+@click.option('-nz', '--nominal_z', type=float, default=0.052, help="nominal Z value for gripper finger tag")
 @click.option('-ml', '--min_episode_length', type=int, default=24)
 @click.option('--ignore_cameras', type=str, default=None, help="comma separated string of camera serials to ignore")
 def main(input, output, tcp_offset, tx_slam_tag,
