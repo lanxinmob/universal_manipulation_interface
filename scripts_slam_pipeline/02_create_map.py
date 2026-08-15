@@ -25,7 +25,7 @@ from umi.common.cv_util import draw_predefined_mask
 @click.command()
 @click.option('-i', '--input_dir', required=True, help='Directory for mapping video')
 @click.option('-m', '--map_path', default=None, help='ORB_SLAM3 *.osa map atlas file')
-@click.option('-d', '--docker_image', default="chicheng/orb_slam3:latest")
+@click.option('-d', '--docker_image', default="orb_slam3:gopro13")
 @click.option('-np', '--no_docker_pull', is_flag=True, default=False, help="pull docker image from docker hub")
 @click.option('-nm', '--no_mask', is_flag=True, default=False, help="Whether to mask out gripper and mirrors. Set if map is created with bare GoPro no on gripper.")
 def main(input_dir, map_path, docker_image, no_docker_pull, no_mask):
@@ -67,6 +67,13 @@ def main(input_dir, map_path, docker_image, no_docker_pull, no_mask):
     map_mount_source = pathlib.Path(map_path)
     map_mount_target = pathlib.Path('/map').joinpath(map_mount_source.name)
 
+    # GoPro13 calibration
+    calib_mount_source = pathlib.Path(ROOT_DIR).joinpath('example','calibration_gopro13').absolute()
+    calib_mount_target = pathlib.Path('/calibration')
+
+    setting_path = calib_mount_source.joinpath('gopro13_2_7k_wide_fisheye.yaml')
+    assert setting_path.is_file(), f"Missing SLAM setting: {setting_path}"
+
     # run SLAM
     cmd = [
         'docker',
@@ -74,10 +81,11 @@ def main(input_dir, map_path, docker_image, no_docker_pull, no_mask):
         '--rm', # delete after finish
         '--volume', str(video_dir) + ':' + '/data',
         '--volume', str(map_mount_source.parent) + ':' + str(map_mount_target.parent),
+        '--volume',str(calib_mount_source) + ':' + str(calib_mount_target) + ':ro',
         docker_image,
         '/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam',
         '--vocabulary', '/ORB_SLAM3/Vocabulary/ORBvoc.txt',
-        '--setting', '/ORB_SLAM3/Examples/Monocular-Inertial/gopro10_maxlens_fisheye_setting_v1_720.yaml',
+        '--setting', '/calibration/gopro13_2_7k_wide_fisheye.yaml',
         '--input_video', str(video_path),
         '--input_imu_json', str(json_path),
         '--output_trajectory_csv', str(csv_path),

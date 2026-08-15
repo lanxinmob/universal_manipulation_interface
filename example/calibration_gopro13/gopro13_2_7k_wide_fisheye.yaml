@@ -1,0 +1,149 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# Camera Parameters
+# GoPro HERO13 Black
+# 2.7K 4:3 Wide
+# 2704 x 2028 @ 120 fps
+# HyperSmooth OFF
+# OpenICC fisheye calibration
+#--------------------------------------------------------------------------------------------
+
+File.version: "1.0"
+
+Camera.type: "KannalaBrandt8"
+
+# OpenICC:
+# focal_length = 812.004979197407
+# aspect_ratio = 1.0036591553817327
+#
+# Theia/OpenICC fisheye:
+# fx = focal_length
+# fy = focal_length * aspect_ratio
+
+Camera1.fx: 812.004979197407
+Camera1.fy: 814.976231587031
+
+Camera1.cx: 1346.9556688382534
+Camera1.cy: 1016.6238917862755
+
+Camera1.k1:  0.04643204173594668
+Camera1.k2: -0.09103072738368206
+Camera1.k3:  0.13301565347993283
+Camera1.k4: -0.0680562118375292
+
+
+#--------------------------------------------------------------------------------------------
+# Camera resolution
+# Native 2.7K - no resizing in gopro_slam.cc
+#--------------------------------------------------------------------------------------------
+
+Camera.width: 2704
+Camera.height: 2028
+
+# GoPro reports about 119.8801 fps.
+# Use nominal video mode here.
+Camera.fps: 60
+
+# Keep consistent with Cheng Chi GoPro configuration
+Camera.RGB: 1
+
+
+#--------------------------------------------------------------------------------------------
+# Camera -> IMU transformation
+#
+# Final converged OpenICC result:
+#
+# q_i_c =
+# [-0.002360292317,
+#  -0.001251219409,
+#   0.708480877304,
+#  -0.705724953480]
+#
+# t_i_c =
+# [ 0.003180578474,
+#   0.004844095408,
+#  -0.001173981320 ] m
+#
+# IMPORTANT:
+# OpenICC internally reorders raw GoPro ACCL/GYRO:
+# raw [x,y,z] -> OpenICC [y,z,x]
+#
+# Cheng Chi gopro_slam.cc uses the raw GoPro axis order.
+# Therefore apply:
+#
+# perm_mat =
+# [0 0 1 0
+#  1 0 0 0
+#  0 1 0 0
+#  0 0 0 1]
+#
+# T_b_c1 = perm_mat * OpenICC_T_i_c
+#--------------------------------------------------------------------------------------------
+
+IMU.T_b_c1: !!opencv-matrix
+    rows: 4
+    cols: 4
+    dt: f
+    data: [
+         0.005110477462, -0.999979361867, -0.003893438111, -0.001173981320,
+        -0.999985726940, -0.005104364421, -0.001578410424,  0.003180578474,
+         0.001558504322,  0.003901448970, -0.999991174841,  0.004844095408,
+         0.0,             0.0,             0.0,             1.0           ]
+
+
+#--------------------------------------------------------------------------------------------
+# IMU Noise Parameters
+# GoPro HERO13 - Allan variance from >2h static recording
+#--------------------------------------------------------------------------------------------
+
+IMU.NoiseGyro: 0.00122892
+IMU.NoiseAcc:  0.01478657
+
+IMU.GyroWalk: 0.0000574753
+IMU.AccWalk:  0.000335744
+
+IMU.Frequency: 197.557
+
+
+#--------------------------------------------------------------------------------------------
+# Map Parameters
+#--------------------------------------------------------------------------------------------
+
+System.thFarPoints: 20.0
+
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters
+# Full resolution 2704x2028
+# Following Cheng Chi full-resolution GoPro configuration
+#--------------------------------------------------------------------------------------------
+
+ORBextractor.nFeatures: 2500
+
+ORBextractor.scaleFactor: 1.2
+
+ORBextractor.nLevels: 14
+
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -3.5
+Viewer.ViewpointF: 500.0
+
+Viewer.imageViewScale: 0.5

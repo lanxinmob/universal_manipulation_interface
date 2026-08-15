@@ -45,7 +45,10 @@ def main(session_dir, calibration_dir):
         assert script_path.is_file()
         cmd = [
             'python', str(script_path),
-            str(session)
+            '-d',
+            'openicc-hero13:latest',
+            '-np',
+            str(session),
         ]
         result = subprocess.run(cmd)
         assert result.returncode == 0
@@ -61,7 +64,8 @@ def main(session_dir, calibration_dir):
             cmd = [
                 'python', str(script_path),
                 '--input_dir', str(mapping_dir),
-                '--map_path', str(map_path)
+                '--map_path', str(map_path),
+                '-np'
             ]
             result = subprocess.run(cmd)
             assert result.returncode == 0
@@ -73,7 +77,8 @@ def main(session_dir, calibration_dir):
         cmd = [
             'python', str(script_path),
             '--input_dir', str(demo_dir),
-            '--map_path', str(map_path)
+            '--map_path', str(map_path),
+            '-np'
         ]
         result = subprocess.run(cmd)
         assert result.returncode == 0

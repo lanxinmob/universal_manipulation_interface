@@ -39,7 +39,7 @@ def runner(cmd, cwd, stdout_path, stderr_path, timeout, **kwargs):
 @click.command()
 @click.option('-i', '--input_dir', required=True, help='Directory for demos folder')
 @click.option('-m', '--map_path', default=None, help='ORB_SLAM3 *.osa map atlas file')
-@click.option('-d', '--docker_image', default="chicheng/orb_slam3:latest")
+@click.option('-d', '--docker_image', default="orb_slam3:gopro13")
 @click.option('-n', '--num_workers', type=int, default=None)
 @click.option('-ml', '--max_lost_frames', type=int, default=60)
 @click.option('-tm', '--timeout_multiple', type=float, default=16, help='timeout_multiple * duration = timeout')
@@ -104,6 +104,13 @@ def main(input_dir, map_path, docker_image, num_workers, max_lost_frames, timeou
                 map_mount_source = map_path
                 map_mount_target = pathlib.Path('/map').joinpath(map_mount_source.name)
 
+                # GoPro13 calibration
+                calib_mount_source = pathlib.Path(ROOT_DIR).joinpath('example','calibration_gopro13').absolute()
+                calib_mount_target = pathlib.Path('/calibration')
+
+                setting_path = calib_mount_source.joinpath('gopro13_2_7k_wide_fisheye.yaml')
+                assert setting_path.is_file(), f"Missing SLAM setting: {setting_path}"
+
                 # run SLAM
                 cmd = [
                     'docker',
@@ -111,10 +118,11 @@ def main(input_dir, map_path, docker_image, num_workers, max_lost_frames, timeou
                     '--rm', # delete after finish
                     '--volume', str(video_dir) + ':' + '/data',
                     '--volume', str(map_mount_source.parent) + ':' + str(map_mount_target.parent),
+                    '--volume',str(calib_mount_source) + ':' + str(calib_mount_target) + ':ro',
                     docker_image,
                     '/ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam',
                     '--vocabulary', '/ORB_SLAM3/Vocabulary/ORBvoc.txt',
-                    '--setting', '/ORB_SLAM3/Examples/Monocular-Inertial/gopro10_maxlens_fisheye_setting_v1_720.yaml',
+                    '--setting', '/calibration/gopro13_2_7k_wide_fisheye.yaml',
                     '--input_video', str(video_path),
                     '--input_imu_json', str(json_path),
                     '--output_trajectory_csv', str(csv_path),
