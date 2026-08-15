@@ -11,6 +11,7 @@ import pathlib
 import pickle
 import collections
 import click
+import numpy as np
 
 # %%
 @click.command()
@@ -56,16 +57,21 @@ def main(input):
                 video_path = demos_path.joinpath(video_path_rel).absolute()
                 assert video_path.is_file()
                 
-                video_start, video_end = camera['video_start_end']
-                if n_frames is None:
-                    n_frames = video_end - video_start
+                if 'video_frame_indices' in camera:
+                    frame_indices = np.asarray(camera['video_frame_indices'])
+                    this_n_frames = len(frame_indices)
                 else:
-                    assert n_frames == (video_end - video_start)
+                    video_start, video_end = camera['video_start_end']
+                    frame_indices = np.arange(video_start, video_end)
+                    this_n_frames = video_end - video_start
+                if n_frames is None:
+                    n_frames = this_n_frames
+                else:
+                    assert n_frames == this_n_frames
                 
                 videos_dict[str(video_path)].append({
                     'camera_idx': cam_id,
-                    'frame_start': video_start,
-                    'frame_end': video_end,
+                    'frame_indices': frame_indices,
                     'buffer_start': buffer_start
                 })
             buffer_start += n_frames

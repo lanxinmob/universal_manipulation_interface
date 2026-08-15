@@ -130,16 +130,23 @@ def main(input, output, out_res, out_fov, compression_level,
                 video_path = demos_path.joinpath(video_path_rel).absolute()
                 assert video_path.is_file()
                 
-                video_start, video_end = camera['video_start_end']
-                if n_frames is None:
-                    n_frames = video_end - video_start
+                if 'video_frame_indices' in camera:
+                    frame_indices = np.asarray(
+                        camera['video_frame_indices'], dtype=np.int64)
                 else:
-                    assert n_frames == (video_end - video_start)
+                    # Backward compatibility for plans generated before
+                    # temporal frame subsampling was supported.
+                    video_start, video_end = camera['video_start_end']
+                    frame_indices = np.arange(
+                        video_start, video_end, dtype=np.int64)
+                if n_frames is None:
+                    n_frames = len(frame_indices)
+                else:
+                    assert n_frames == len(frame_indices)
                 
                 videos_dict[str(video_path)].append({
                     'camera_idx': cam_id,
-                    'frame_start': video_start,
-                    'frame_end': video_end,
+                    'frame_indices': frame_indices,
                     'buffer_start': buffer_start
                 })
             buffer_start += n_frames
@@ -173,9 +180,12 @@ def main(input, output, out_res, out_fov, compression_level,
             in_res=(iw, ih),
             out_res=out_res
         )
-        tasks = sorted(tasks, key=lambda x: x['frame_start'])
+        tasks = sorted(tasks, key=lambda x: x['frame_indices'][0])
         camera_idx = None
         for task in tasks:
+            frame_indices = task['frame_indices']
+            if len(frame_indices) == 0 or np.any(np.diff(frame_indices) <= 0):
+                raise ValueError("Video frame indices must be non-empty and strictly increasing.")
             if camera_idx is None:
                 camera_idx = task['camera_idx']
             else:
@@ -197,19 +207,17 @@ def main(input, output, out_res, out_fov, compression_level,
             in_stream = container.streams.video[0]
             # in_stream.thread_type = "AUTO"
             in_stream.thread_count = 1
-            buffer_idx = 0
+            task_frame_idx = 0
             for frame_idx, frame in tqdm(enumerate(container.decode(in_stream)), total=in_stream.frames, leave=False):
                 if curr_task_idx >= len(tasks):
                     # all tasks done
                     break
                 
-                if frame_idx < tasks[curr_task_idx]['frame_start']:
-                    # current task not started
+                task = tasks[curr_task_idx]
+                target_frame_idx = task['frame_indices'][task_frame_idx]
+                if frame_idx < target_frame_idx:
                     continue
-                elif frame_idx < tasks[curr_task_idx]['frame_end']:
-                    if frame_idx == tasks[curr_task_idx]['frame_start']:
-                        buffer_idx = tasks[curr_task_idx]['buffer_start']
-                    
+                elif frame_idx == target_frame_idx:
                     # do current task
                     img = frame.to_ndarray(format='rgb24')
 
@@ -233,14 +241,23 @@ def main(input, output, out_res, out_fov, compression_level,
                         img[is_mirror] = img[:,::-1,:][is_mirror]
                         
                     # compress image
+                    buffer_idx = task['buffer_start'] + task_frame_idx
                     img_array[buffer_idx] = img
-                    buffer_idx += 1
+                    task_frame_idx += 1
                     
-                    if (frame_idx + 1) == tasks[curr_task_idx]['frame_end']:
+                    if task_frame_idx == len(task['frame_indices']):
                         # current task done, advance
                         curr_task_idx += 1
+                        task_frame_idx = 0
                 else:
-                    assert False
+                    raise RuntimeError(
+                        f"Decoder skipped requested frame {target_frame_idx} "
+                        f"in {mp4_path}.")
+            if curr_task_idx != len(tasks):
+                task = tasks[curr_task_idx]
+                missing = task['frame_indices'][task_frame_idx]
+                raise RuntimeError(
+                    f"Video ended before requested frame {missing} in {mp4_path}.")
                     
     with tqdm(total=len(vid_args)) as pbar:
         # one chunk per thread, therefore no synchronization needed

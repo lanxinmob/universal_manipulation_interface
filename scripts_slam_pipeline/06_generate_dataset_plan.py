@@ -26,6 +26,10 @@ from tqdm import tqdm
 import av
 from exiftool import ExifToolHelper
 from umi.common.timecode_util import mp4_get_start_datetime
+from umi.common.timestamp_util import (
+    get_median_dt,
+    match_nearest_timestamps
+)
 from umi.common.pose_util import pose_to_mat, mat_to_pose
 from umi.common.cv_util import (
     get_gripper_width
@@ -504,7 +508,8 @@ def main(input, output, tcp_offset, tx_slam_tag,
     #     }],
     #     "cameras": [{
     #         "video_path": str,
-    #         "video_start_end": Tuple[int,int]
+    #         # raw-video frame index for every SLAM/episode sample
+    #         "video_frame_indices": np.ndarray
     #     }]
     # }]
     total_avaliable_time = 0.0
@@ -523,49 +528,94 @@ def main(input, output, tcp_offset, tx_slam_tag,
         demo_video_meta_df.set_index('camera_idx', inplace=True)
         demo_video_meta_df.sort_index(inplace=True)
         
-        # determine optimal alignment
-        dt = None
+        # Load each trajectory and map every SLAM sample back to the raw-video
+        # frame with the nearest PTS. This supports trajectories generated from
+        # a temporal subset of the source video (for example 120 fps -> 60 fps).
+        trajectory_data = dict()
+        for cam_idx, row in demo_video_meta_df.iterrows():
+            video_dir = row['video_dir']
+            csv_df = pd.read_csv(video_dir.joinpath('camera_trajectory.csv'))
+            trajectory_timestamps = csv_df['timestamp'].to_numpy(dtype=np.float64)
+            trajectory_dt = get_median_dt(
+                trajectory_timestamps, f"{video_dir.name} trajectory")
+
+            tag_detection_results = pickle.load(
+                video_dir.joinpath('tag_detection.pkl').open('rb'))
+            video_timestamps = np.asarray(
+                [x['time'] for x in tag_detection_results], dtype=np.float64)
+            video_dt = get_median_dt(
+                video_timestamps, f"{video_dir.name} video")
+            trajectory_video_indices = match_nearest_timestamps(
+                reference_timestamps=video_timestamps,
+                query_timestamps=trajectory_timestamps,
+                max_delta=video_dt * 0.51,
+                name=f"{video_dir.name} trajectory-to-video")
+
+            trajectory_data[cam_idx] = {
+                'csv_df': csv_df,
+                'absolute_timestamps': (
+                    trajectory_timestamps + row['start_timestamp']),
+                'trajectory_dt': trajectory_dt,
+                'video_frame_indices': trajectory_video_indices,
+                'tag_detection_results': tag_detection_results
+            }
+
+        # Determine the trajectory whose sampling phase best aligns all cameras.
         alignment_costs = list()
         for cam_idx, row in demo_video_meta_df.iterrows():
-            dt = 1 / row['fps']
+            this_data = trajectory_data[cam_idx]
+            dt = this_data['trajectory_dt']
+            this_start = this_data['absolute_timestamps'][0]
             this_alignment_cost = list()
             for other_cam_idx, other_row in demo_video_meta_df.iterrows():
-                # what's the delay for previous frame
-                diff = other_row['start_timestamp'] - row['start_timestamp']
+                other_start = trajectory_data[
+                    other_cam_idx]['absolute_timestamps'][0]
+                diff = other_start - this_start
                 remainder = diff % dt
                 this_alignment_cost.append(remainder)
             alignment_costs.append(this_alignment_cost)
-        # first video in bundle
-        align_cam_idx = np.argmin([sum(x) for x in alignment_costs])
+        align_cam_pos = np.argmin([sum(x) for x in alignment_costs])
+        align_cam_idx = demo_video_meta_df.index[align_cam_pos]
 
-        # mock experiment
-        # alignment_costs = list()
-        # starts = [0.2, 0.1, 0.0]
-        # for i in range(len(starts)):
-        #     this_alignment_cost = list()
-        #     for j in range(len(starts)):
-        #         this_alignment_cost.append((starts[j] - starts[i]) % 0.5)
-        #     alignment_costs.append(this_alignment_cost)
+        # Use actual SLAM timestamps from the anchor camera as the episode grid.
+        # Limit the interval to timestamps covered by every camera trajectory.
+        trajectory_start = max(
+            x['absolute_timestamps'][0] for x in trajectory_data.values())
+        trajectory_end = min(
+            x['absolute_timestamps'][-1] for x in trajectory_data.values())
+        common_start = max(start_timestamp, trajectory_start)
+        common_end = min(end_timestamp, trajectory_end)
+        anchor_timestamps = trajectory_data[
+            align_cam_idx]['absolute_timestamps']
+        in_common_interval = (
+            (anchor_timestamps >= common_start)
+            & (anchor_timestamps <= common_end)
+        )
+        demo_timestamps = anchor_timestamps[in_common_interval]
+        if len(demo_timestamps) < 2:
+            print(f"Skipped demo {demo_idx}, insufficient aligned trajectory samples.")
+            n_dropped_demos += 1
+            continue
+        dt = get_median_dt(demo_timestamps, f"demo {demo_idx}")
+        n_frames = len(demo_timestamps)
 
-        # align_video_idx = np.argmin([sum(x) for x in alignment_costs])
-        # print(align_video_idx)
-
-        # rewrite start_timestamp to be integer multiple of dt
-        align_video_start = demo_video_meta_df.loc[align_cam_idx]['start_timestamp']
-        start_timestamp += dt - ((start_timestamp - align_video_start) % dt)
-
-        # descritize timestamps for all videos
-        cam_start_frame_idxs = list()
-        n_frames = int((end_timestamp - start_timestamp) / dt)
-        for cam_idx, row in demo_video_meta_df.iterrows():
-            video_start_frame = math.ceil((start_timestamp - row['start_timestamp']) / dt)
-            video_n_frames = math.floor((row['end_timestamp'] - start_timestamp) / dt) - 1
-            if video_start_frame < 0:
-                video_n_frames += video_start_frame
-                video_start_frame = 0
-            cam_start_frame_idxs.append(video_start_frame)
-            n_frames = min(n_frames, video_n_frames)
-        demo_timestamps = np.arange(n_frames) * float(dt) + start_timestamp
+        camera_trajectory_indices = dict()
+        camera_video_frame_indices = dict()
+        try:
+            for cam_idx, row in demo_video_meta_df.iterrows():
+                this_data = trajectory_data[cam_idx]
+                trajectory_indices = match_nearest_timestamps(
+                    reference_timestamps=this_data['absolute_timestamps'],
+                    query_timestamps=demo_timestamps,
+                    max_delta=this_data['trajectory_dt'] * 0.51,
+                    name=f"{row['video_dir'].name} cross-camera")
+                camera_trajectory_indices[cam_idx] = trajectory_indices
+                camera_video_frame_indices[cam_idx] = this_data[
+                    'video_frame_indices'][trajectory_indices]
+        except ValueError as e:
+            print(f"Skipped demo {demo_idx}, timestamp alignment failed: {e}")
+            n_dropped_demos += 1
+            continue
 
         # load pose and gripper data for each video
         # determin valid frames for each video
@@ -578,7 +628,6 @@ def main(input, output, tcp_offset, tx_slam_tag,
                 # not gripper camera
                 continue
 
-            start_frame_idx = cam_start_frame_idxs[cam_idx]
             video_dir = row['video_dir']
             
             # load check data
@@ -595,9 +644,9 @@ def main(input, output, tcp_offset, tx_slam_tag,
                 dropped_camera_count[row['camera_serial']] += 1
                 continue            
             
-            csv_df = pd.read_csv(csv_path)
-            # select aligned frames
-            df = csv_df.iloc[start_frame_idx: start_frame_idx+n_frames]
+            csv_df = trajectory_data[cam_idx]['csv_df']
+            # Select exactly the rows submitted to SLAM for this episode.
+            df = csv_df.iloc[camera_trajectory_indices[cam_idx]].copy()
             is_tracked = (~df['is_lost']).to_numpy()
 
             # basic filtering to remove bad tracking
@@ -636,16 +685,17 @@ def main(input, output, tcp_offset, tx_slam_tag,
                 dropped_camera_count[row['camera_serial']] += 1
                 continue
                         
-            tag_detection_results = pickle.load(open(pkl_path, 'rb'))
-            # select aligned frames
-            tag_detection_results = tag_detection_results[start_frame_idx: start_frame_idx+n_frames]
+            all_tag_detection_results = trajectory_data[
+                cam_idx]['tag_detection_results']
+            tag_detection_results = [
+                all_tag_detection_results[x]
+                for x in camera_video_frame_indices[cam_idx]
+            ]
 
             # one item per frame
             video_timestamps = np.array([x['time'] for x in tag_detection_results])
 
-            if len(df) != len(video_timestamps):
-                print(f"Skipping {video_dir.name}, video csv length mismatch.")
-                continue
+            assert len(df) == len(video_timestamps) == n_frames
 
             # get gripper action
             ghi = row['gripper_hardware_id']
@@ -750,10 +800,10 @@ def main(input, output, tcp_offset, tx_slam_tag,
                     })
                 # all cams
                 video_dir = row['video_dir']
-                vid_start_frame = cam_start_frame_idxs[cam_idx]
                 cameras.append({
                     "video_path": str(video_dir.joinpath('raw_video.mp4').relative_to(video_dir.parent)),
-                    "video_start_end": (start+vid_start_frame, end+vid_start_frame)
+                    "video_frame_indices": camera_video_frame_indices[
+                        cam_idx][start:end]
                 })
             
             all_plans.append({
