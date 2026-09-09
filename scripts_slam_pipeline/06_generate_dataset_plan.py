@@ -86,9 +86,9 @@ def get_x_projection(tx_tag_this, tx_tag_other):
 @click.command()
 @click.option('-i', '--input', required=True, help='Project directory')
 @click.option('-o', '--output', default=None)
-@click.option('-to', '--tcp_offset', type=float, default=0.205, help="Distance from gripper tip to mounting screw")
+@click.option('-to', '--tcp_offset', type=float, default=0.2, help="Distance from gripper tip to mounting screw")
 @click.option('-ts', '--tx_slam_tag', default=None, help="tx_slam_tag.json")
-@click.option('-nz', '--nominal_z', type=float, default=0.052, help="nominal Z value for gripper finger tag")
+@click.option('-nz', '--nominal_z', type=float, default=0.067891, help="nominal Z value for gripper finger tag")
 @click.option('-ml', '--min_episode_length', type=int, default=24)
 @click.option('--ignore_cameras', type=str, default=None, help="comma separated string of camera serials to ignore")
 def main(input, output, tcp_offset, tx_slam_tag,
@@ -106,7 +106,7 @@ def main(input, output, tcp_offset, tx_slam_tag,
     cam_to_center_height = 0.086 # constant for UMI
     # optical center to mounting screw, positive is when optical center is in front of the mount
     cam_to_mount_offset = 0.01465 # constant for GoPro Hero 9,10,11
-    cam_to_tip_offset = cam_to_mount_offset + tcp_offset
+    cam_to_tip_offset = tcp_offset - cam_to_mount_offset
 
     pose_cam_tcp = np.array([0, cam_to_center_height, cam_to_tip_offset, 0,0,0])
     tx_cam_tcp = pose_to_mat(pose_cam_tcp)
