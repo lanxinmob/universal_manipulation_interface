@@ -22,7 +22,7 @@ import subprocess
 def main(session_dir, calibration_dir):
     script_dir = pathlib.Path(__file__).parent.joinpath('scripts_slam_pipeline')
     if calibration_dir is None:
-        calibration_dir = pathlib.Path(__file__).parent.joinpath('example', 'calibration')
+        calibration_dir = pathlib.Path(__file__).parent.joinpath('example', 'calibration_gopro13')
     else:
         calibration_dir = pathlib.Path(calibration_dir)
     assert calibration_dir.is_dir()
@@ -81,7 +81,10 @@ def main(session_dir, calibration_dir):
             '-np'
         ]
         result = subprocess.run(cmd)
-        assert result.returncode == 0
+        if result.returncode != 0:
+            raise click.ClickException(
+                f'03_batch_slam failed with exit code {result.returncode}; '
+                'stopping the pipeline.')
 
         print("############# 04_detect_aruco ###########")
         script_path = script_dir.joinpath("04_detect_aruco.py")

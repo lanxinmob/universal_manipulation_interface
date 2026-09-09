@@ -11,6 +11,8 @@ os.chdir(ROOT_DIR)
 
 # %%
 import pathlib
+import csv
+import math
 import click
 import subprocess
 import multiprocessing
@@ -23,6 +25,65 @@ from umi.common.cv_util import draw_predefined_mask
 
 
 # %%
+TRAJECTORY_COLUMNS = {
+    'frame_idx', 'timestamp', 'is_lost',
+    'x', 'y', 'z', 'q_x', 'q_y', 'q_z', 'q_w'
+}
+MIN_TRACKED_FRAMES = 60
+MAX_LOST_FRAMES = 10
+
+
+def validate_trajectory(csv_path):
+    """Return None when a trajectory is usable by the dataset planner."""
+    if not csv_path.is_file():
+        return 'camera_trajectory.csv was not created'
+
+    try:
+        with csv_path.open(newline='') as file:
+            reader = csv.DictReader(file)
+            columns = set(reader.fieldnames or ())
+            missing_columns = sorted(TRAJECTORY_COLUMNS - columns)
+            if missing_columns:
+                return f"missing columns: {', '.join(missing_columns)}"
+
+            previous_timestamp = None
+            tracked_frames = 0
+            lost_frames = 0
+            row_count = 0
+            for row_count, row in enumerate(reader, start=1):
+                try:
+                    timestamp = float(row['timestamp'])
+                    pose = [float(row[name]) for name in (
+                        'x', 'y', 'z', 'q_x', 'q_y', 'q_z', 'q_w')]
+                except (TypeError, ValueError):
+                    return f'invalid numeric value at data row {row_count}'
+
+                if not math.isfinite(timestamp) or not all(
+                        math.isfinite(value) for value in pose):
+                    return f'non-finite value at data row {row_count}'
+                if previous_timestamp is not None and timestamp <= previous_timestamp:
+                    return f'timestamps are not strictly increasing at data row {row_count}'
+                previous_timestamp = timestamp
+
+                is_lost = row['is_lost'].strip().lower()
+                if is_lost == 'true':
+                    lost_frames += 1
+                elif is_lost == 'false':
+                    tracked_frames += 1
+                else:
+                    return f"invalid is_lost value at data row {row_count}: {row['is_lost']!r}"
+    except (OSError, csv.Error) as error:
+        return f'could not read trajectory: {error}'
+
+    if row_count == 0:
+        return 'trajectory has no data rows'
+    if lost_frames > MAX_LOST_FRAMES:
+        return f'too many lost frames: {lost_frames} > {MAX_LOST_FRAMES}'
+    if tracked_frames < MIN_TRACKED_FRAMES:
+        return f'too few tracked frames: {tracked_frames} < {MIN_TRACKED_FRAMES}'
+    return None
+
+
 def runner(cmd, cwd, stdout_path, stderr_path, timeout, **kwargs):
     try:
         return subprocess.run(cmd,                       
@@ -35,6 +96,28 @@ def runner(cmd, cwd, stdout_path, stderr_path, timeout, **kwargs):
         return e
 
 
+def collect_results(completed, future_video_dirs, failures, pbar):
+    for future in completed:
+        video_dir = future_video_dirs[future]
+        try:
+            result = future.result()
+        except Exception as error:
+            failures.append((video_dir, f'runner failed: {error}'))
+            continue
+
+        if isinstance(result, subprocess.TimeoutExpired):
+            failures.append((video_dir, f'timed out after {result.timeout:.1f}s'))
+            continue
+        if result.returncode != 0:
+            failures.append((video_dir, f'docker exited with code {result.returncode}'))
+            continue
+
+        validation_error = validate_trajectory(video_dir.joinpath('camera_trajectory.csv'))
+        if validation_error is not None:
+            failures.append((video_dir, validation_error))
+    pbar.update(len(completed))
+
+
 # %%
 @click.command()
 @click.option('-i', '--input_dir', required=True, help='Directory for demos folder')
@@ -42,7 +125,7 @@ def runner(cmd, cwd, stdout_path, stderr_path, timeout, **kwargs):
 @click.option('-d', '--docker_image', default="orb_slam3:gopro13")
 @click.option('-n', '--num_workers', type=int, default=None)
 @click.option('-ml', '--max_lost_frames', type=int, default=60)
-@click.option('-tm', '--timeout_multiple', type=float, default=16, help='timeout_multiple * duration = timeout')
+@click.option('-tm', '--timeout_multiple', type=float, default=36, help='timeout_multiple * duration = timeout')
 @click.option('-np', '--no_docker_pull', is_flag=True, default=False, help="pull docker image from docker hub")
 def main(input_dir, map_path, docker_image, num_workers, max_lost_frames, timeout_multiple, no_docker_pull):
     input_dir = pathlib.Path(os.path.expanduser(input_dir)).absolute()
@@ -57,7 +140,7 @@ def main(input_dir, map_path, docker_image, num_workers, max_lost_frames, timeou
     assert map_path.is_file()
 
     if num_workers is None:
-        num_workers = multiprocessing.cpu_count() // 2
+        num_workers = max(1, multiprocessing.cpu_count() // 4)
 
     # pull docker
     if not no_docker_pull:
@@ -72,15 +155,22 @@ def main(input_dir, map_path, docker_image, num_workers, max_lost_frames, timeou
             print("Docker pull failed!")
             exit(1)
 
+    failures = list()
     with tqdm(total=len(input_video_dirs)) as pbar:
         # one chunk per thread, therefore no synchronization needed
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
             futures = set()
+            future_video_dirs = dict()
             for video_dir in tqdm(input_video_dirs):
                 video_dir = video_dir.absolute()
-                if video_dir.joinpath('camera_trajectory.csv').is_file():
+                trajectory_path = video_dir.joinpath('camera_trajectory.csv')
+                validation_error = validate_trajectory(trajectory_path)
+                if validation_error is None:
                     print(f"camera_trajectory.csv already exists, skipping {video_dir.name}")
+                    pbar.update(1)
                     continue
+                if trajectory_path.is_file():
+                    print(f"Invalid existing trajectory for {video_dir.name}: {validation_error}; rerunning")
                 
                 # softlink won't work in bind volume
                 mount_target = pathlib.Path('/data')
@@ -138,17 +228,30 @@ def main(input_dir, map_path, docker_image, num_workers, max_lost_frames, timeou
                     # limit number of inflight tasks
                     completed, futures = concurrent.futures.wait(futures, 
                         return_when=concurrent.futures.FIRST_COMPLETED)
-                    pbar.update(len(completed))
+                    collect_results(completed, future_video_dirs, failures, pbar)
 
-                futures.add(executor.submit(runner,
-                    cmd, str(video_dir), stdout_path, stderr_path, timeout))
+                future = executor.submit(
+                    runner, cmd, str(video_dir), stdout_path, stderr_path, timeout)
+                futures.add(future)
+                future_video_dirs[future] = video_dir
                 # print(' '.join(cmd))
 
             completed, futures = concurrent.futures.wait(futures)
-            pbar.update(len(completed))
+            collect_results(completed, future_video_dirs, failures, pbar)
 
-    print("Done! Result:")
-    print([x.result() for x in completed])
+    if failures:
+        click.echo(f'\nSLAM failed for {len(failures)} video(s):', err=True)
+        for video_dir, reason in failures:
+            click.echo(
+                f'  {video_dir.name}: {reason} '
+                f'(logs: {video_dir.joinpath("slam_stdout.txt")}, '
+                f'{video_dir.joinpath("slam_stderr.txt")})',
+                err=True)
+        raise click.ClickException(
+            'Batch SLAM did not produce a valid trajectory for every video; '
+            'stopping the pipeline.')
+
+    print('Done! All trajectories are valid.')
 
 # %%
 if __name__ == "__main__":
