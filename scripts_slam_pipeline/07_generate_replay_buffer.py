@@ -39,7 +39,8 @@ register_codecs()
 @click.option('-or', '--out_res', type=str, default='224,224')
 @click.option('-of', '--out_fov', type=float, default=None)
 @click.option('-cl', '--compression_level', type=int, default=99)
-@click.option('-nm', '--no_mirror', is_flag=True, default=False, help="Disable mirror observation by masking them out")
+@click.option('-nm', '--no_mirror/--mirror', default=True,
+              help="Disable mirror observation by masking them out")
 @click.option('-ms', '--mirror_swap', is_flag=True, default=False)
 @click.option('-n', '--num_workers', type=int, default=None)
 def main(input, output, out_res, out_fov, compression_level, 
@@ -57,7 +58,7 @@ def main(input, output, out_res, out_fov, compression_level,
     fisheye_converter = None
     if out_fov is not None:
         intr_path = pathlib.Path(os.path.expanduser(ipath)).absolute().joinpath(
-            'calibration',
+            'calibration_gopro13',
             'gopro_intrinsics_2_7k.json'
         )
         opencv_intr_dict = parse_fisheye_intrinsics(json.load(intr_path.open('r')))
