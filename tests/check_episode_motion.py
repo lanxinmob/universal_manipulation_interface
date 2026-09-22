@@ -1,5 +1,11 @@
 """Report episode motion statistics and position jumps in a Zarr dataset."""
 
+import os
+import sys
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(ROOT_DIR)
+
 import numpy as np
 import zarr
 from scipy.spatial.transform import Rotation

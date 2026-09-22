@@ -3,7 +3,7 @@
 Run from the project root with the project's Python environment.
 
 ```bash
-PYTHONPATH=. python tests/check_episode_motion.py
+python tests/check_episode_motion.py
 PYTHONPATH=. python tests/check_negative_z.py
 python tests/check_dataset_plan.py
 python tests/check_dataset_plan.py /path/to/dataset_plan.pkl
