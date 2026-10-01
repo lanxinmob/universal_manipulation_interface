@@ -99,13 +99,23 @@ def main(input_dir, map_path, docker_image, no_docker_pull, no_mask):
     stdout_path = video_dir.joinpath('slam_stdout.txt')
     stderr_path = video_dir.joinpath('slam_stderr.txt')
 
-    result = subprocess.run(
-        cmd,
-        cwd=str(video_dir),
-        stdout=stdout_path.open('w'),
-        stderr=stderr_path.open('w')
-    )
-    print(result)
+    with stdout_path.open('w') as stdout_file, stderr_path.open('w') as stderr_file:
+        result = subprocess.run(
+            cmd,
+            cwd=str(video_dir),
+            stdout=stdout_file,
+            stderr=stderr_file
+        )
+    if result.returncode != 0:
+        raise click.ClickException(
+            f'ORB-SLAM3 exited with code {result.returncode}; '
+            f'see {stdout_path} and {stderr_path}'
+        )
+    if not map_path.is_file():
+        raise click.ClickException(
+            f'ORB-SLAM3 exited successfully but did not create {map_path}; '
+            f'see {stdout_path} and {stderr_path}'
+        )
 
 
 # %%

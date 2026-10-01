@@ -68,8 +68,14 @@ def main(session_dir, calibration_dir):
                 '-np'
             ]
             result = subprocess.run(cmd)
-            assert result.returncode == 0
-            assert map_path.is_file()
+            if result.returncode != 0:
+                raise click.ClickException(
+                    f'02_create_map failed with exit code {result.returncode}; '
+                    f'see {mapping_dir / "slam_stdout.txt"} and '
+                    f'{mapping_dir / "slam_stderr.txt"}'
+                )
+            if not map_path.is_file():
+                raise click.ClickException(f'02_create_map did not create {map_path}')
 
         print("############# 03_batch_slam ###########")
         script_path = script_dir.joinpath("03_batch_slam.py")
