@@ -14,6 +14,7 @@ os.chdir(ROOT_DIR)
 import pathlib
 import click
 import subprocess
+import csv
 import multiprocessing
 import concurrent.futures
 from tqdm import tqdm
@@ -38,6 +39,7 @@ def main(input_dir, map_path, docker_image, no_docker_pull, no_mask):
     else:
         map_path = pathlib.Path(os.path.expanduser(map_path)).absolute()
     map_path.parent.mkdir(parents=True, exist_ok=True)
+    map_preexisting = map_path.is_file()
 
     # pull docker
     if not no_docker_pull:
@@ -107,6 +109,8 @@ def main(input_dir, map_path, docker_image, no_docker_pull, no_mask):
             stderr=stderr_file
         )
     if result.returncode != 0:
+        if not map_preexisting:
+            map_path.unlink(missing_ok=True)
         raise click.ClickException(
             f'ORB-SLAM3 exited with code {result.returncode}; '
             f'see {stdout_path} and {stderr_path}'
@@ -114,6 +118,34 @@ def main(input_dir, map_path, docker_image, no_docker_pull, no_mask):
     if not map_path.is_file():
         raise click.ClickException(
             f'ORB-SLAM3 exited successfully but did not create {map_path}; '
+            f'see {stdout_path} and {stderr_path}'
+        )
+
+    trajectory_path = video_dir.joinpath(csv_path.name)
+    try:
+        with trajectory_path.open(newline='') as trajectory_file:
+            reader = csv.DictReader(trajectory_file)
+            if 'is_lost' not in (reader.fieldnames or ()):
+                raise ValueError('missing is_lost column')
+            tracked_frames = 0
+            for row in reader:
+                is_lost = (row.get('is_lost') or '').strip().lower()
+                if is_lost not in ('true', 'false'):
+                    raise ValueError(f'invalid is_lost value: {is_lost!r}')
+                if is_lost == 'false':
+                    tracked_frames += 1
+    except (OSError, csv.Error, ValueError) as error:
+        if not map_preexisting:
+            map_path.unlink(missing_ok=True)
+        raise click.ClickException(
+            f'Invalid mapping trajectory {trajectory_path}: {error}'
+        ) from error
+
+    if tracked_frames < 60:
+        if not map_preexisting:
+            map_path.unlink(missing_ok=True)
+        raise click.ClickException(
+            f'ORB-SLAM3 tracked only {tracked_frames} frames (need at least 60); '
             f'see {stdout_path} and {stderr_path}'
         )
 
