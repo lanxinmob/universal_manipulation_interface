@@ -15,7 +15,7 @@ from diffusion_policy.codecs.imagecodecs_numcodecs import register_codecs
 
 def main():
     register_codecs()
-    path = "/home/hjadmin/Downloads/demo_towel/towel_0.zarr.zip"
+    path = "/home/hjadmin/Downloads/demo_mouse/mouse_0.zarr.zip"
     stored_hz = 29.97
 
     with zarr.ZipStore(path, mode="r") as store:
